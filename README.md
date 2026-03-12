@@ -1,6 +1,10 @@
-# contract-review
+# contract-review-cli
 
 한국 법령(근로기준법, 민법, 주택임대차보호법 등)에 기반한 **계약서 자동 검토 CLI 도구**입니다.
+
+
+<img width="1024" height="559" alt="image" src="https://github.com/user-attachments/assets/fa4b1335-e21e-462b-8846-f1e714fe35d9" />
+
 
 ## 주요 기능
 
