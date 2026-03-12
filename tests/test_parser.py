@@ -62,6 +62,15 @@ class TestTextParser:
         collection = parser.parse(contract_file)
         assert collection.total_clauses == 0
 
+    def test_cp949_text_file_supported(self, tmp_path):
+        contract_file = tmp_path / "contract-cp949.txt"
+        contract_file.write_text(SAMPLE_CONTRACT, encoding="cp949")
+
+        parser = TextParser()
+        collection = parser.parse(contract_file)
+
+        assert collection.total_clauses >= 3
+
 
 class TestDefinedTermExtraction:
     def test_korean_quotes(self):
@@ -89,6 +98,31 @@ class TestPDFParserTextSegmentation:
         text = "제1조 (목적)\n이 계약의 목적은..."
         clauses = parser._segment_clauses(text)
         assert len(clauses) >= 1
-        # 제1조가 포함된 조항 찾기
         first = clauses[0]
-        assert "제1조" in first.clause_id or "1조" in first.clause_id
+        assert first.clause_id == "제1조"
+        assert first.heading == "목적"
+
+    def test_nested_numbered_lines_stay_in_same_article(self):
+        parser = PDFParser()
+        clauses = parser._segment_clauses(SAMPLE_CONTRACT)
+
+        assert len(clauses) == 5
+        second_clause = clauses[1]
+        assert second_clause.clause_id == "제2조"
+        assert "1. 근로 장소" in second_clause.text
+        assert "2. 담당 업무" in second_clause.text
+
+    def test_chapter_section_path_is_preserved(self):
+        parser = PDFParser()
+        text = """제1장 총칙
+제1조(목적)
+내용1
+제2장 기타
+제2조(기타)
+내용2
+"""
+
+        clauses = parser._segment_clauses(text)
+
+        assert clauses[0].section_path == ["제1장 총칙"]
+        assert clauses[1].section_path == ["제2장 기타"]

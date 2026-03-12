@@ -9,15 +9,15 @@ try:
 except ImportError as e:
     raise ImportError("pdfplumber가 설치되지 않았습니다. `pip install pdfplumber`를 실행하세요.") from e
 
-from contract_review.models.clause import Clause, ClauseCollection
-
-# 한국식 조항 번호 패턴
-CLAUSE_PATTERNS = [
-    re.compile(r"^제\s*(\d+)\s*조\s*(?:\(([^)]+)\))?"),       # 제1조, 제1조(목적)
-    re.compile(r"^(\d+)\.\s+([^\n]{1,50})"),                   # 1. 제목
-    re.compile(r"^제\s*(\d+)\s*항"),                            # 제1항
-    re.compile(r"^([가-힣]+)\.\s+([^\n]{1,50})"),              # 가. 내용
-]
+from contract_review.models.clause import (
+    ARTICLE_ID_PATTERN,
+    LETTER_ID_PATTERN,
+    NUMERIC_ID_PATTERN,
+    PARAGRAPH_ID_PATTERN,
+    Clause,
+    ClauseCollection,
+    normalize_clause_id,
+)
 
 # 한국 계약서에서 사용되는 정의 용어 인용 부호: "갑", \u2018을\u2019, \u201c병\u201d
 DEFINED_TERM_PATTERN = re.compile(
@@ -39,14 +39,56 @@ def _extract_defined_terms(text: str) -> List[str]:
 
 def _detect_clause_start(line: str) -> Optional[tuple[str, Optional[str]]]:
     """조항 시작 여부 감지. (clause_id, heading) 또는 None 반환."""
-    for pattern in CLAUSE_PATTERNS:
-        m = pattern.match(line.strip())
-        if m:
-            groups = m.groups()
-            clause_id = line.strip().split("\n")[0][:30]
-            heading = groups[1] if len(groups) > 1 and groups[1] else None
-            return clause_id, heading
+    stripped = line.strip()
+
+    article_match = ARTICLE_ID_PATTERN.match(stripped)
+    if article_match:
+        heading_match = re.match(r"^제\s*\d+\s*조\s*\(([^)]+)\)", stripped)
+        heading = heading_match.group(1).strip() if heading_match else None
+        return normalize_clause_id(stripped), heading
+
+    numeric_match = re.match(r"^(\d+)\.\s+([^\n]{1,50})", stripped)
+    if numeric_match:
+        return normalize_clause_id(stripped), numeric_match.group(2).strip()
+
+    paragraph_match = PARAGRAPH_ID_PATTERN.match(stripped)
+    if paragraph_match:
+        return normalize_clause_id(stripped), None
+
+    letter_match = re.match(r"^([가-힣])\.\s+([^\n]{1,50})", stripped)
+    if letter_match:
+        return normalize_clause_id(stripped), letter_match.group(2).strip()
+
     return None
+
+
+def _clause_kind(clause_id: str) -> str:
+    normalized = normalize_clause_id(clause_id)
+    if ARTICLE_ID_PATTERN.match(normalized):
+        return "article"
+    if PARAGRAPH_ID_PATTERN.match(normalized):
+        return "paragraph"
+    if NUMERIC_ID_PATTERN.match(normalized):
+        return "numeric"
+    if LETTER_ID_PATTERN.match(normalized):
+        return "letter"
+    return "other"
+
+
+def _should_start_new_clause(current_id: Optional[str], detected_id: str) -> bool:
+    if current_id is None:
+        return True
+
+    current_kind = _clause_kind(current_id)
+    detected_kind = _clause_kind(detected_id)
+
+    if current_kind == "article" and detected_kind in {"paragraph", "numeric", "letter"}:
+        return False
+
+    if current_kind == "paragraph" and detected_kind in {"numeric", "letter"}:
+        return False
+
+    return True
 
 
 class PDFParser:
@@ -114,13 +156,13 @@ class PDFParser:
             # 장/편 구분 감지 (section_stack 갱신)
             chapter_match = re.match(r"^제\s*(\d+)\s*[장편절]", stripped)
             if chapter_match:
-                section_stack = [stripped[:20]]
                 flush_clause()
+                section_stack = [stripped[:20]]
                 continue
 
             # 조항 시작 감지
             result = _detect_clause_start(stripped)
-            if result:
+            if result and _should_start_new_clause(current_id, result[0]):
                 flush_clause()
                 clause_counter += 1
                 raw_id, heading = result

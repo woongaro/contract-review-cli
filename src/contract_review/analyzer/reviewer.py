@@ -7,17 +7,24 @@ from contract_review.llm.base import LLMClient
 from contract_review.models.clause import ClauseCollection
 from contract_review.models.review import ContractType, ReviewIssue, ReviewReport
 from contract_review.prompts.review_prompts import get_review_system_prompt
+from contract_review.redaction import redact_text
 
-# 조항 전체가 너무 길면 분할하여 처리하는 임계값 (토큰 절약)
-MAX_CLAUSES_PER_BATCH = 30
 
+def _build_safe_parse_error_message(exc: Exception) -> str:
+    """민감정보 재노출을 피하는 LLM 파싱 오류 메시지."""
+    return (
+        f"[파싱 오류: {exc}]\n\n"
+        "LLM 응답을 JSON으로 해석하지 못했습니다. "
+        "민감정보 보호를 위해 원본 응답은 출력하지 않았습니다."
+    )
 
 class Reviewer:
     """계약서를 한국 법령 기준으로 검토합니다."""
 
-    def __init__(self, llm: LLMClient) -> None:
+    def __init__(self, llm: LLMClient, redact_sensitive: bool = False) -> None:
         self._llm = llm
-        self._detector = TypeDetector(llm)
+        self._redact_sensitive = redact_sensitive
+        self._detector = TypeDetector(llm, redact_sensitive=redact_sensitive)
 
     def review(
         self,
@@ -45,9 +52,14 @@ class Reviewer:
 
     def _build_contract_text(self, collection: ClauseCollection) -> str:
         parts = []
-        for clause in collection.clauses[:MAX_CLAUSES_PER_BATCH]:
-            heading = f" ({clause.heading})" if clause.heading else ""
-            parts.append(f"[{clause.clause_id}{heading}]\n{clause.text}")
+        for clause in collection.clauses:
+            heading_text = clause.heading or ""
+            clause_text = clause.text
+            if self._redact_sensitive:
+                heading_text = redact_text(heading_text)
+                clause_text = redact_text(clause_text)
+            heading = f" ({heading_text})" if heading_text else ""
+            parts.append(f"[{clause.clause_id}{heading}]\n{clause_text}")
         return "\n\n".join(parts)
 
     def _parse_response(
@@ -71,14 +83,14 @@ class Reviewer:
                 summary=data.get("summary", ""),
             )
         except (json.JSONDecodeError, KeyError, ValueError) as exc:
-            # 파싱 실패 시 빈 리포트 반환 (원본 응답을 summary에 포함)
+            # 파싱 실패 시 빈 리포트 반환 (원본 응답은 재노출하지 않음)
             return ReviewReport(
                 source_file=collection.source_file,
                 contract_type=detected_type,
                 total_clauses=collection.total_clauses,
                 issues=[],
                 overall_risk="medium",
-                summary=f"[파싱 오류: {exc}]\n\nLLM 원본 응답:\n{response}",
+                summary=_build_safe_parse_error_message(exc),
             )
 
 

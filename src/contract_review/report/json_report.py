@@ -13,7 +13,7 @@ def save_json(data: BaseModel | dict[str, Any], output_path: str | Path) -> Path
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     if isinstance(data, BaseModel):
-        json_str = data.model_dump_json(indent=2, ensure_ascii=False)
+        json_str = json.dumps(data.model_dump(mode="json"), indent=2, ensure_ascii=False)
     else:
         json_str = json.dumps(data, indent=2, ensure_ascii=False)
 

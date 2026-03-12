@@ -2,18 +2,20 @@
 
 import json
 
-from contract_review.analyzer.reviewer import _extract_json
+from contract_review.analyzer.reviewer import _build_safe_parse_error_message, _extract_json
 from contract_review.llm.base import LLMClient
 from contract_review.models.clause import ClauseCollection
 from contract_review.models.diff import DiffItem, DiffReport
 from contract_review.prompts.diff_prompts import get_diff_system_prompt
+from contract_review.redaction import redact_file_reference, redact_text
 
 
 class Differ:
     """두 계약서를 비교하여 변경 사항과 위험도를 분석합니다."""
 
-    def __init__(self, llm: LLMClient) -> None:
+    def __init__(self, llm: LLMClient, redact_sensitive: bool = False) -> None:
         self._llm = llm
+        self._redact_sensitive = redact_sensitive
 
     def diff(
         self,
@@ -33,10 +35,19 @@ class Differ:
         return self._parse_response(response, old_collection.source_file, new_collection.source_file)
 
     def _build_contract_text(self, collection: ClauseCollection, label: str) -> str:
-        parts = [f"## {label}: {collection.source_file}"]
+        file_reference = collection.source_file
+        if self._redact_sensitive:
+            file_reference = redact_file_reference(collection.source_file)
+
+        parts = [f"## {label}: {file_reference}"]
         for clause in collection.clauses:
-            heading = f" ({clause.heading})" if clause.heading else ""
-            parts.append(f"[{clause.clause_id}{heading}]\n{clause.text}")
+            heading_text = clause.heading or ""
+            clause_text = clause.text
+            if self._redact_sensitive:
+                heading_text = redact_text(heading_text)
+                clause_text = redact_text(clause_text)
+            heading = f" ({heading_text})" if heading_text else ""
+            parts.append(f"[{clause.clause_id}{heading}]\n{clause_text}")
         return "\n\n".join(parts)
 
     def _parse_response(
@@ -60,5 +71,5 @@ class Differ:
                 old_file=old_file,
                 new_file=new_file,
                 items=[],
-                summary=f"[파싱 오류: {exc}]\n\nLLM 원본 응답:\n{response}",
+                summary=_build_safe_parse_error_message(exc),
             )

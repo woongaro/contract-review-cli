@@ -3,17 +3,19 @@
 import json
 from typing import Any
 
-from contract_review.analyzer.reviewer import _extract_json
+from contract_review.analyzer.reviewer import _build_safe_parse_error_message, _extract_json
 from contract_review.llm.base import LLMClient
 from contract_review.models.clause import Clause, ClauseCollection
 from contract_review.prompts.suggest_prompts import get_suggest_system_prompt
+from contract_review.redaction import redact_text
 
 
 class Suggester:
     """계약서 조항 개선 제안을 생성합니다."""
 
-    def __init__(self, llm: LLMClient) -> None:
+    def __init__(self, llm: LLMClient, redact_sensitive: bool = False) -> None:
         self._llm = llm
+        self._redact_sensitive = redact_sensitive
 
     def suggest(
         self,
@@ -48,12 +50,17 @@ class Suggester:
         contract_type: str | None,
     ) -> dict[str, Any]:
         contract_context = f"계약서 유형: {contract_type}\n" if contract_type else ""
+        heading_text = clause.heading or ""
+        clause_text = clause.text
+        if self._redact_sensitive:
+            heading_text = redact_text(heading_text)
+            clause_text = redact_text(clause_text)
         prompt = (
             f"{contract_context}"
             f"다음 조항을 한국 법령에 맞게 개선하는 구체적인 대안 문구를 제안하십시오:\n\n"
             f"[{clause.clause_id}]"
-            f"{' (' + clause.heading + ')' if clause.heading else ''}\n"
-            f"{clause.text}"
+            f"{' (' + heading_text + ')' if heading_text else ''}\n"
+            f"{clause_text}"
         )
         response = self._llm.complete(prompt=prompt, system=get_suggest_system_prompt())
         return self._parse_response(response, clause)
@@ -62,12 +69,12 @@ class Suggester:
         try:
             text = _extract_json(response)
             return json.loads(text)
-        except (json.JSONDecodeError, ValueError):
+        except (json.JSONDecodeError, ValueError) as exc:
             return {
                 "clause_id": clause.clause_id,
                 "original_text": clause.text,
                 "issues": [],
                 "legal_basis": [],
                 "suggested_text": "",
-                "explanation": f"[파싱 오류]\n\nLLM 원본 응답:\n{response}",
+                "explanation": _build_safe_parse_error_message(exc),
             }

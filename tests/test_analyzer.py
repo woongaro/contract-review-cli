@@ -46,6 +46,30 @@ class TestTypeDetector:
         result = detector.detect(_make_collection())
         assert result == ContractType.NDA
 
+    def test_detect_redacts_sensitive_data_in_prompt(self):
+        mock_llm = _mock_llm(json.dumps({"contract_type": "general", "reason": "ok"}))
+        detector = TypeDetector(mock_llm, redact_sensitive=True)
+        collection = ClauseCollection(
+            source_file="test.pdf",
+            clauses=[
+                Clause(
+                    clause_id="제1조",
+                    heading="담당자 alice@example.com",
+                    text="연락처 010-1234-5678 / 주민등록번호 900101-1234567",
+                )
+            ],
+        )
+
+        detector.detect(collection)
+
+        prompt = mock_llm.complete.call_args.kwargs["prompt"]
+        assert "alice@example.com" not in prompt
+        assert "010-1234-5678" not in prompt
+        assert "900101-1234567" not in prompt
+        assert "[REDACTED_EMAIL]" in prompt
+        assert "[REDACTED_PHONE]" in prompt
+        assert "[REDACTED_ID_NUMBER]" in prompt
+
 
 class TestReviewer:
     def _make_review_response(self, contract_type: str = "employment") -> str:
@@ -96,6 +120,42 @@ class TestReviewer:
         assert report.issues == []
         assert "파싱 오류" in report.summary
 
+    def test_build_contract_text_includes_all_clauses(self):
+        reviewer = Reviewer(_mock_llm(self._make_review_response()))
+        collection = ClauseCollection(
+            source_file="many.txt",
+            clauses=[Clause(clause_id=f"C{i}", text=f"T{i}") for i in range(1, 32)],
+        )
+
+        contract_text = reviewer._build_contract_text(collection)
+
+        assert "C30" in contract_text
+        assert "C31" in contract_text
+
+    def test_review_redacts_sensitive_data_in_prompt(self):
+        mock_llm = _mock_llm(self._make_review_response())
+        reviewer = Reviewer(mock_llm, redact_sensitive=True)
+        collection = ClauseCollection(
+            source_file="sensitive.pdf",
+            clauses=[
+                Clause(
+                    clause_id="제1조",
+                    heading="연락처 alice@example.com",
+                    text="담당자 010-1234-5678, 주민등록번호 900101-1234567",
+                )
+            ],
+        )
+
+        reviewer.review(collection, ContractType.GENERAL)
+
+        prompt = mock_llm.complete.call_args.kwargs["prompt"]
+        assert "alice@example.com" not in prompt
+        assert "010-1234-5678" not in prompt
+        assert "900101-1234567" not in prompt
+        assert "[REDACTED_EMAIL]" in prompt
+        assert "[REDACTED_PHONE]" in prompt
+        assert "[REDACTED_ID_NUMBER]" in prompt
+
 
 class TestDiffer:
     def test_diff_returns_report(self):
@@ -126,6 +186,30 @@ class TestDiffer:
         assert len(report.items) == 1
         assert report.items[0].change_type == "numeric_change"
 
+    def test_diff_redacts_prompt_text_and_file_reference(self):
+        response = json.dumps({"summary": "ok", "items": []})
+        mock_llm = _mock_llm(response)
+        differ = Differ(mock_llm, redact_sensitive=True)
+
+        old_col = ClauseCollection(
+            source_file=r"C:\secret\old-contract.pdf",
+            clauses=[Clause(clause_id="제1조", text="담당자 old@example.com")],
+        )
+        new_col = ClauseCollection(
+            source_file=r"C:\secret\new-contract.pdf",
+            clauses=[Clause(clause_id="제1조", text="담당자 new@example.com")],
+        )
+
+        differ.diff(old_col, new_col)
+
+        prompt = mock_llm.complete.call_args.kwargs["prompt"]
+        assert r"C:\secret\old-contract.pdf" not in prompt
+        assert r"C:\secret\new-contract.pdf" not in prompt
+        assert "old@example.com" not in prompt
+        assert "new@example.com" not in prompt
+        assert "[REDACTED_FILE.pdf]" in prompt
+        assert "[REDACTED_EMAIL]" in prompt
+
 
 class TestSuggester:
     def test_suggest_returns_result(self):
@@ -151,3 +235,37 @@ class TestSuggester:
 
         with pytest.raises(ValueError, match="제99조"):
             suggester.suggest(collection, "제99조")
+
+
+def test_review_parse_error_does_not_echo_llm_response():
+    reviewer = Reviewer(_mock_llm("sensitive-review-response"))
+    collection = _make_collection()
+
+    report = reviewer.review(collection, ContractType.GENERAL)
+
+    assert report.issues == []
+    assert "sensitive-review-response" not in report.summary
+    assert "LLM 원본 응답" not in report.summary
+
+
+def test_diff_parse_error_does_not_echo_llm_response():
+    differ = Differ(_mock_llm("sensitive-diff-response"))
+    old_collection = _make_collection(source="old.pdf")
+    new_collection = _make_collection(source="new.pdf")
+
+    report = differ.diff(old_collection, new_collection)
+
+    assert report.items == []
+    assert "sensitive-diff-response" not in report.summary
+    assert "LLM 원본 응답" not in report.summary
+
+
+def test_suggest_parse_error_does_not_echo_llm_response():
+    suggester = Suggester(_mock_llm("sensitive-suggest-response"))
+    collection = _make_collection()
+
+    result = suggester.suggest(collection, collection.clauses[0].clause_id)
+
+    assert result["clause_id"] == collection.clauses[0].clause_id
+    assert "sensitive-suggest-response" not in result["explanation"]
+    assert "LLM 원본 응답" not in result["explanation"]

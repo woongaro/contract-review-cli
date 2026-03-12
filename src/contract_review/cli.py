@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Annotated, Optional
@@ -18,6 +19,8 @@ from contract_review.llm import get_client
 from contract_review.models.clause import ClauseCollection
 
 load_dotenv()
+
+DEFAULT_LLM = os.getenv("DEFAULT_LLM", "claude")
 
 # Windows: stdout/stderr를 UTF-8로 재설정하여 한글·특수문자 출력 지원
 if sys.platform == "win32":
@@ -46,6 +49,67 @@ OutputOption = Annotated[
     Optional[Path],
     typer.Option("--output", "-o", help="출력 파일 경로 (.md 또는 .json)"),
 ]
+RedactOption = Annotated[
+    bool,
+    typer.Option(
+        "--redact",
+        help="LLM 전송 전에 이메일·전화번호·등록번호·UUID 등 직접 식별자를 정규식으로 마스킹합니다.",
+    ),
+]
+RiskAckOption = Annotated[
+    bool,
+    typer.Option(
+        "--ack-risk",
+        help="위험고지를 확인했고 계약 텍스트의 외부 LLM CLI 전송 가능성을 이해했습니다.",
+    ),
+]
+
+
+def _is_interactive_terminal() -> bool:
+    return bool(
+        getattr(sys.stdin, "isatty", lambda: False)()
+        and getattr(sys.stdout, "isatty", lambda: False)()
+    )
+
+
+def _ensure_risk_acknowledged(
+    llm: str,
+    files: list[Path],
+    ack_risk: bool,
+    redact: bool,
+) -> None:
+    file_names = ", ".join(file.name for file in files)
+    redact_notice = (
+        "\n`--redact`는 일부 직접 식별자를 마스킹하지만 완전한 익명화는 보장하지 않습니다."
+        if redact
+        else ""
+    )
+    err_console.print(
+        Panel(
+            (
+                f"이 명령은 [bold]{file_names}[/bold]의 계약 텍스트를 "
+                f"[bold]{llm}[/bold] CLI로 전송할 수 있습니다.\n"
+                "외부 전송이 금지된 문서에는 사용하지 마십시오.\n"
+                "실계약 원문, 추출 텍스트, JSON 산출물은 자동 삭제되지 않습니다."
+                f"{redact_notice}"
+            ),
+            title="[bold yellow]위험고지[/bold yellow]",
+            border_style="yellow",
+            expand=False,
+        )
+    )
+
+    if ack_risk:
+        return
+
+    if not _is_interactive_terminal():
+        err_console.print(
+            "[red]오류:[/red] 비대화형 환경에서는 `--ack-risk` 옵션이 필요합니다."
+        )
+        raise typer.Exit(1)
+
+    if not typer.confirm("위험고지를 확인했고 계속하시겠습니까?", default=False):
+        raise typer.Exit(1)
 
 
 def _get_parser(file_path: Path):
@@ -104,8 +168,10 @@ def parse(
 @app.command()
 def review(
     file: Annotated[Path, typer.Argument(help="검토할 계약서 파일")],
-    llm: LLMOption = "claude",
+    llm: LLMOption = DEFAULT_LLM,
     output: OutputOption = None,
+    redact: RedactOption = False,
+    ack_risk: RiskAckOption = False,
     contract_type: Annotated[
         Optional[str],
         typer.Option("--type", "-t", help="계약 유형 강제 지정 [employment|service|lease|nda|general]"),
@@ -116,19 +182,26 @@ def review(
         err_console.print(f"[red]오류:[/red] 파일을 찾을 수 없습니다: {file}")
         raise typer.Exit(1)
 
+    _ensure_risk_acknowledged(llm, [file], ack_risk, redact)
+
     from contract_review.analyzer.reviewer import Reviewer
     from contract_review.models.review import ContractType
     from contract_review.report.json_report import save_json
     from contract_review.report.md_report import save_markdown
 
-    forced_type = ContractType(contract_type) if contract_type else None
+    try:
+        forced_type = ContractType(contract_type) if contract_type else None
+    except ValueError as exc:
+        raise typer.BadParameter(
+            "계약 유형은 employment, service, lease, nda, general 중 하나여야 합니다."
+        ) from exc
 
     with Progress(SpinnerColumn(spinner_name="line"), TextColumn("[progress.description]{task.description}"), console=console) as progress:
         progress.add_task("파싱 중...", total=None)
         collection = _load_collection(file)
         progress.add_task(f"[{llm.upper()}] 검토 중...", total=None)
         client = get_client(llm)
-        reviewer = Reviewer(client)
+        reviewer = Reviewer(client, redact_sensitive=redact)
         report = reviewer.review(collection, forced_type)
 
     _print_review_summary(report)
@@ -149,14 +222,18 @@ def review(
 def diff(
     old_file: Annotated[Path, typer.Argument(help="이전 버전 계약서")],
     new_file: Annotated[Path, typer.Argument(help="새 버전 계약서")],
-    llm: LLMOption = "claude",
+    llm: LLMOption = DEFAULT_LLM,
     output: OutputOption = None,
+    redact: RedactOption = False,
+    ack_risk: RiskAckOption = False,
 ) -> None:
     """두 계약서 버전을 비교합니다."""
     for f in [old_file, new_file]:
         if not f.exists():
             err_console.print(f"[red]오류:[/red] 파일을 찾을 수 없습니다: {f}")
             raise typer.Exit(1)
+
+    _ensure_risk_acknowledged(llm, [old_file, new_file], ack_risk, redact)
 
     from contract_review.analyzer.differ import Differ
     from contract_review.report.json_report import save_json
@@ -169,7 +246,7 @@ def diff(
         new_col = _load_collection(new_file)
         progress.add_task(f"[{llm.upper()}] 비교 분석 중...", total=None)
         client = get_client(llm)
-        differ = Differ(client)
+        differ = Differ(client, redact_sensitive=redact)
         report = differ.diff(old_col, new_col)
 
     console.print(Panel(
@@ -194,13 +271,17 @@ def diff(
 def suggest(
     file: Annotated[Path, typer.Argument(help="계약서 파일")],
     clause: Annotated[str, typer.Option("--clause", "-c", help="개선할 조항 ID (예: '제3조', '1.2')")],
-    llm: LLMOption = "claude",
+    llm: LLMOption = DEFAULT_LLM,
     output: OutputOption = None,
+    redact: RedactOption = False,
+    ack_risk: RiskAckOption = False,
 ) -> None:
     """특정 조항에 대한 개선 문구를 제안합니다."""
     if not file.exists():
         err_console.print(f"[red]오류:[/red] 파일을 찾을 수 없습니다: {file}")
         raise typer.Exit(1)
+
+    _ensure_risk_acknowledged(llm, [file], ack_risk, redact)
 
     from contract_review.analyzer.suggester import Suggester
     from contract_review.report.json_report import save_json
@@ -210,7 +291,7 @@ def suggest(
         collection = _load_collection(file)
         progress.add_task(f"[{llm.upper()}] 개선 제안 생성 중...", total=None)
         client = get_client(llm)
-        suggester = Suggester(client)
+        suggester = Suggester(client, redact_sensitive=redact)
         result = suggester.suggest(collection, clause)
 
     console.print(Panel(

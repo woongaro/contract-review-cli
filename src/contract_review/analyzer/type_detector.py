@@ -5,6 +5,7 @@ import json
 from contract_review.llm.base import LLMClient
 from contract_review.models.clause import ClauseCollection
 from contract_review.models.review import ContractType
+from contract_review.redaction import redact_text
 
 DETECT_SYSTEM = """당신은 한국 법률 전문가 AI입니다.
 주어진 계약서 내용을 분석하여 계약서 유형을 분류하십시오.
@@ -22,8 +23,9 @@ DETECT_SYSTEM = """당신은 한국 법률 전문가 AI입니다.
 class TypeDetector:
     """계약서 유형을 LLM으로 자동 감지합니다."""
 
-    def __init__(self, llm: LLMClient) -> None:
+    def __init__(self, llm: LLMClient, redact_sensitive: bool = False) -> None:
         self._llm = llm
+        self._redact_sensitive = redact_sensitive
 
     def detect(self, collection: ClauseCollection) -> ContractType:
         """계약서 유형을 감지하여 ContractType을 반환합니다."""
@@ -37,7 +39,14 @@ class TypeDetector:
 
     def _build_sample(self, collection: ClauseCollection) -> str:
         sample_clauses = collection.clauses[:5]
-        parts = [f"[{c.clause_id}] {c.heading or ''}\n{c.text}" for c in sample_clauses]
+        parts = []
+        for clause in sample_clauses:
+            heading = clause.heading or ""
+            text = clause.text
+            if self._redact_sensitive:
+                heading = redact_text(heading)
+                text = redact_text(text)
+            parts.append(f"[{clause.clause_id}] {heading}\n{text}")
         return "\n\n".join(parts)
 
     def _parse_response(self, response: str) -> ContractType:

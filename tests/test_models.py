@@ -43,6 +43,12 @@ class TestClauseCollection:
         assert col.get_clause("제1조") is not None
         assert col.get_clause("제99조") is None
 
+    def test_get_clause_matches_normalized_id(self):
+        clauses = [Clause(clause_id="제1조 (목적)", text="내용")]
+        col = ClauseCollection(source_file="test.pdf", clauses=clauses)
+
+        assert col.get_clause("제1조") is not None
+
     def test_empty(self):
         col = ClauseCollection(source_file="empty.pdf")
         assert col.total_clauses == 0
