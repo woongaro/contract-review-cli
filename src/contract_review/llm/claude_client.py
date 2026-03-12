@@ -1,35 +1,27 @@
-"""Anthropic Claude LLM 클라이언트."""
+"""Claude Code CLI를 subprocess로 호출하는 클라이언트."""
 
-import os
-
-try:
-    import anthropic
-except ImportError as e:
-    raise ImportError("anthropic 패키지가 설치되지 않았습니다. `pip install anthropic`를 실행하세요.") from e
+import subprocess
 
 from contract_review.llm.base import LLMClient
 
-DEFAULT_MODEL = "claude-sonnet-4-6"
-MAX_TOKENS = 4096
-
 
 class ClaudeClient(LLMClient):
-    """Anthropic Claude API 클라이언트."""
+    """Claude Code CLI(`claude`) 기반 클라이언트. API 키 불필요."""
 
-    def __init__(self, model: str = DEFAULT_MODEL, api_key: str | None = None) -> None:
-        self.model = model
-        self._client = anthropic.Anthropic(
-            api_key=api_key or os.environ.get("ANTHROPIC_API_KEY"),
-        )
+    def __init__(self, cli: str = "claude") -> None:
+        self._cli = cli
 
     def complete(self, prompt: str, system: str = "") -> str:
-        kwargs: dict = {
-            "model": self.model,
-            "max_tokens": MAX_TOKENS,
-            "messages": [{"role": "user", "content": prompt}],
-        }
-        if system:
-            kwargs["system"] = system
-
-        message = self._client.messages.create(**kwargs)
-        return message.content[0].text
+        full_prompt = f"{system}\n\n{prompt}" if system else prompt
+        result = subprocess.run(
+            [self._cli, "--print", full_prompt],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"claude CLI 오류 (exit {result.returncode}):\n{result.stderr}"
+            )
+        return result.stdout.strip()

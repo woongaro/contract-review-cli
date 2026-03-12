@@ -47,20 +47,21 @@ uv pip install -e .
 pip install -e .
 ```
 
-## 환경 설정
+## 사전 준비 — LLM CLI 설치
 
-`.env.example`을 복사하여 API 키를 설정합니다.
+**API 키 설정이 필요 없습니다.** 각 LLM CLI 도구가 인증을 자체 처리합니다.
 
+| 백엔드 | CLI 도구 | 설치 |
+|--------|----------|------|
+| `claude` (기본값) | Claude Code | https://claude.ai/code |
+| `gemini` | Gemini CLI | https://ai.google.dev/gemini-api/docs/gemini-cli |
+| `openai` | OpenAI Codex CLI | https://github.com/openai/codex |
+
+사용할 CLI가 PATH에 등록되어 있어야 합니다:
 ```bash
-cp .env.example .env
-```
-
-`.env` 파일:
-
-```env
-ANTHROPIC_API_KEY=your_anthropic_api_key
-GOOGLE_API_KEY=your_google_api_key      # Gemini 사용 시
-OPENAI_API_KEY=your_openai_api_key      # OpenAI 사용 시
+which claude   # Claude Code
+which gemini   # Gemini CLI
+which codex    # OpenAI Codex CLI
 ```
 
 ## 사용법
@@ -112,13 +113,13 @@ contract-review parse contract.pdf --output clauses.json
 
 ## LLM 백엔드 선택
 
-`--llm` 옵션으로 LLM 백엔드를 선택합니다:
+`--llm` 옵션으로 LLM 백엔드를 선택합니다 (API 키 불필요):
 
-| 값 | 모델 | 필요한 환경변수 |
-|----|------|----------------|
-| `claude` (기본값) | claude-sonnet-4-6 | `ANTHROPIC_API_KEY` |
-| `gemini` | gemini-1.5-pro | `GOOGLE_API_KEY` |
-| `openai` | gpt-4o | `OPENAI_API_KEY` |
+| 값 | 사용 CLI | 설명 |
+|----|----------|------|
+| `claude` (기본값) | `claude --print` | Claude Code CLI |
+| `gemini` | `gemini` | Gemini CLI |
+| `openai` | `codex --quiet` | OpenAI Codex CLI |
 
 ## 개발
 

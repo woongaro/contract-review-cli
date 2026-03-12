@@ -19,13 +19,24 @@ from contract_review.models.clause import ClauseCollection
 
 load_dotenv()
 
+# Windows: stdout/stderr를 UTF-8로 재설정하여 한글·특수문자 출력 지원
+if sys.platform == "win32":
+    import ctypes
+    ctypes.windll.kernel32.SetConsoleOutputCP(65001)  # type: ignore[attr-defined]
+    ctypes.windll.kernel32.SetConsoleCP(65001)  # type: ignore[attr-defined]
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 app = typer.Typer(
     name="contract-review",
-    help="🇰🇷 한국 법령 기반 계약서 자동 검토 CLI",
+    help="[KR] 한국 법령 기반 계약서 자동 검토 CLI",
     rich_markup_mode="rich",
 )
-console = Console()
-err_console = Console(stderr=True)
+# legacy_windows=False: Win32 Console API 대신 ANSI 이스케이프 사용 (UTF-8 문자 지원)
+console = Console(legacy_windows=False)
+err_console = Console(stderr=True, legacy_windows=False)
 
 LLMOption = Annotated[
     str,
@@ -62,7 +73,7 @@ def parse(
         err_console.print(f"[red]오류:[/red] 파일을 찾을 수 없습니다: {file}")
         raise typer.Exit(1)
 
-    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+    with Progress(SpinnerColumn(spinner_name="line"), TextColumn("[progress.description]{task.description}"), console=console) as progress:
         progress.add_task("파싱 중...", total=None)
         collection = _load_collection(file)
 
@@ -112,7 +123,7 @@ def review(
 
     forced_type = ContractType(contract_type) if contract_type else None
 
-    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+    with Progress(SpinnerColumn(spinner_name="line"), TextColumn("[progress.description]{task.description}"), console=console) as progress:
         progress.add_task("파싱 중...", total=None)
         collection = _load_collection(file)
         progress.add_task(f"[{llm.upper()}] 검토 중...", total=None)
@@ -151,7 +162,7 @@ def diff(
     from contract_review.report.json_report import save_json
     from contract_review.report.md_report import save_markdown
 
-    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+    with Progress(SpinnerColumn(spinner_name="line"), TextColumn("[progress.description]{task.description}"), console=console) as progress:
         progress.add_task("이전 버전 파싱 중...", total=None)
         old_col = _load_collection(old_file)
         progress.add_task("새 버전 파싱 중...", total=None)
@@ -194,7 +205,7 @@ def suggest(
     from contract_review.analyzer.suggester import Suggester
     from contract_review.report.json_report import save_json
 
-    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+    with Progress(SpinnerColumn(spinner_name="line"), TextColumn("[progress.description]{task.description}"), console=console) as progress:
         progress.add_task("파싱 중...", total=None)
         collection = _load_collection(file)
         progress.add_task(f"[{llm.upper()}] 개선 제안 생성 중...", total=None)

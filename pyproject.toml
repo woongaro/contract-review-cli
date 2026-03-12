@@ -21,13 +21,15 @@ classifiers = [
 dependencies = [
     "pydantic>=2.0",
     "pdfplumber>=0.11",
-    "anthropic>=0.40",
-    "google-genai>=0.8",
-    "openai>=1.50",
     "typer>=0.12",
     "rich>=13",
     "python-dotenv>=1.0",
 ]
+
+# LLM 백엔드는 각 CLI 도구를 직접 사용합니다 (API 키 불필요):
+#   Claude : claude CLI (Claude Code)  → https://claude.ai/code
+#   Gemini : gemini CLI                → https://ai.google.dev/gemini-api/docs/gemini-cli
+#   OpenAI : codex CLI (Codex CLI)     → https://github.com/openai/codex
 
 [project.scripts]
 contract-review = "contract_review.cli:app"
