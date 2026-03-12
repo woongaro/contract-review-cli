@@ -58,3 +58,4 @@ reports/
 # Temporary files
 *.tmp
 *.temp
+bin/
