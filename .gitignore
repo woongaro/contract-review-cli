@@ -59,3 +59,7 @@ reports/
 *.tmp
 *.temp
 bin/
+
+# Real contract files (may contain personal/company data)
+contract_full_text.txt
+*.real.txt

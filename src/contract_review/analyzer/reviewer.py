@@ -87,10 +87,14 @@ def _extract_json(text: str) -> str:
     text = text.strip()
     if "```" in text:
         parts = text.split("```")
+        first_block = None
         for part in parts[1::2]:
             if part.startswith("json"):
                 return part[4:].strip()
-            return part.strip()
+            if first_block is None:
+                first_block = part.strip()
+        if first_block is not None:
+            return first_block
     # { } 로 감싸진 부분 추출
     start = text.find("{")
     end = text.rfind("}") + 1
