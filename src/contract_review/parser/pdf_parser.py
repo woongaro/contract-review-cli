@@ -19,7 +19,12 @@ CLAUSE_PATTERNS = [
     re.compile(r"^([가-힣]+)\.\s+([^\n]{1,50})"),              # 가. 내용
 ]
 
-DEFINED_TERM_PATTERN = re.compile(r'"([^"]{2,20})"|'([^']{2,20})'|"([^"]{2,20})"')
+# 한국 계약서에서 사용되는 정의 용어 인용 부호: "갑", \u2018을\u2019, \u201c병\u201d
+DEFINED_TERM_PATTERN = re.compile(
+    r'"([^"]{1,20})"'            # ASCII 큰따옴표 (갑, 을 같은 단어 포함)
+    r"|\u2018([^\u2018\u2019]{1,20})\u2019"  # 왼쪽/오른쪽 작은따옴표
+    r"|\u201c([^\u201c\u201d]{1,20})\u201d"  # 왼쪽/오른쪽 큰따옴표
+)
 
 
 def _extract_defined_terms(text: str) -> List[str]:

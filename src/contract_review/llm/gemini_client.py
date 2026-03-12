@@ -3,11 +3,17 @@
 import os
 
 try:
-    import google.generativeai as genai
-except ImportError as e:
-    raise ImportError(
-        "google-generativeai 패키지가 설치되지 않았습니다. `pip install google-generativeai`를 실행하세요."
-    ) from e
+    from google import genai
+    from google.genai import types as genai_types
+    _USE_NEW_SDK = True
+except ImportError:
+    try:
+        import google.generativeai as genai  # type: ignore[no-redef]
+        _USE_NEW_SDK = False
+    except ImportError as e:
+        raise ImportError(
+            "google-genai 패키지가 설치되지 않았습니다. `pip install google-genai`를 실행하세요."
+        ) from e
 
 from contract_review.llm.base import LLMClient
 
@@ -19,10 +25,24 @@ class GeminiClient(LLMClient):
 
     def __init__(self, model: str = DEFAULT_MODEL, api_key: str | None = None) -> None:
         self.model = model
-        genai.configure(api_key=api_key or os.environ.get("GOOGLE_API_KEY"))
-        self._client = genai.GenerativeModel(model)
+        self._api_key = api_key or os.environ.get("GOOGLE_API_KEY")
+        self._use_new_sdk = _USE_NEW_SDK
+
+        if self._use_new_sdk:
+            self._client = genai.Client(api_key=self._api_key)
+        else:
+            genai.configure(api_key=self._api_key)  # type: ignore[attr-defined]
+            self._legacy_model = genai.GenerativeModel(model)  # type: ignore[attr-defined]
 
     def complete(self, prompt: str, system: str = "") -> str:
         full_prompt = f"{system}\n\n{prompt}" if system else prompt
-        response = self._client.generate_content(full_prompt)
-        return response.text
+
+        if self._use_new_sdk:
+            response = self._client.models.generate_content(
+                model=self.model,
+                contents=full_prompt,
+            )
+            return response.text or ""
+        else:
+            response = self._legacy_model.generate_content(full_prompt)  # type: ignore[attr-defined]
+            return response.text

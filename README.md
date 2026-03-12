@@ -35,7 +35,7 @@ git clone https://github.com/yourusername/contract-review.git
 cd contract-review
 
 # 가상환경 생성 및 의존성 설치
-uv sync
+uv sync --all-extras
 
 # 개발 모드 설치
 uv pip install -e .
